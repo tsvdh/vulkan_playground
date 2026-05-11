@@ -24,7 +24,7 @@ impl App {
     pub fn build_ui(&mut self) {
         self.egui.as_mut().unwrap().immediate_ui(|egui| {
             let egui_context = egui.context();
-            egui::Window::new("Hello world").show(&egui_context, |ui| {});
+            egui::Window::new("Hello world").show(&egui_context, |_ui| {});
         });
     }
 

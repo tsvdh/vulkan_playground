@@ -1,23 +1,45 @@
-frame_durations: VecDeque[2]
+frame_component_durations
 frame_id
 frame_start_moments: VecDeque[2]
 
-A
+channel 1
+1:1
+main thread:async logic
 
-B (0)
+channel 2
+1:1
+async logic:done checker
+
+channel 3
+1:1
+done checker:main thread
+
+A (0)
+perform all necessary actions to be able to render in B
+
+()
+| start async done checking thread
+->  | every cycle:
+    | check if gpu done
+    |   if so send duration (channel 3.1)
+    | check if cpu done (channel 2)
+    |   if so send duration (channel 3.2)
 |
-|
+| start async logic thread
+->  | block until needed (channel 1)
+    | async cpu logic
+    | send done to checker (channel 2)
+
+B (1)
 |
 |
 |
 
-C (1)
-| check if previous frame render is done
-|   set frame_durations[B].render
-| check if previous frame logic is done
-|   set frame_durations[B].logic
+C (2)
+| receive and set frame render duration (channel 3.1)
+| receive and set frame logic duration (channel 3.2)
 |
-| if not both done
+| if not both durations set
 |   return
 |
 | if min time not elapsed
@@ -25,11 +47,23 @@ C (1)
 |
 | update frame_start_moments
 |
-| display frame_durations[B]
-| remove frame_durations[B]
-| add frame_durations[C]
+| display frame_component_durations
+| reset frame_component_durations
 |
 | set frame_id to C
-| start render for C
-| start logic for C
-
+|
+| frame prep
+|
+| set async cpu start time
+| send start to async thread (channel 1)
+|
+| render cpu
+| set render gpu start
+->  | render gpu
+    | signal fence
+|
+| ui
+|
+| base cpu logic
+|
+|

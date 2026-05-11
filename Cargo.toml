@@ -10,7 +10,7 @@ pretty_env_logger = "0.5"
 vulkano-shaders = "0.35"
 image = "0.25"
 winit = "0.30"
-obj-rs = { git = "https://github.com/simnalamburt/obj-rs", version = "0.7.4", features = ["vulkano"] }
+obj-rs = { git = "https://github.com/simnalamburt/obj-rs", rev = "62455dd", features = ["vulkano"] }
 glam = "0.32"
 egui = "0.31"
-egui_winit_vulkano = "0.28"
+egui_winit_vulkano = { git = "https://github.com/tsvdh/egui_winit_vulkano.git", branch = "master" }

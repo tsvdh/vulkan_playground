@@ -2,15 +2,14 @@ mod logic;
 mod rendering;
 mod shader_modules;
 mod ui;
+mod timing;
 
 use std::{env, thread};
 use std::collections::{BTreeSet, VecDeque};
-use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::thread::JoinHandle;
+use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 use egui_winit_vulkano::{Gui};
 use glam::Vec3;
@@ -23,7 +22,7 @@ use vulkano::image::view::ImageView;
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter};
 use vulkano::pipeline::graphics::viewport::{Viewport};
 use vulkano::pipeline::{GraphicsPipeline};
-use vulkano::swapchain::{PresentFuture, Surface, Swapchain};
+use vulkano::swapchain::{Surface, Swapchain};
 use vulkano::sync::future::FenceSignalFuture;
 use vulkano::sync::GpuFuture;
 use winit::application::ApplicationHandler;
@@ -51,8 +50,8 @@ struct App {
     render_context: Option<RenderContext>,
     logic_items: LogicItems,
     egui: Option<Gui>,
-    frame_duration: FrameDuration,
-    test: Arc<bool>,
+    timing: Timing,
+    async_management: AsyncManagement,
 }
 
 struct RenderContext {
@@ -62,64 +61,47 @@ struct RenderContext {
     depth_attachment_image_view: Arc<ImageView>,
     pipeline: Arc<GraphicsPipeline>,
     viewport: Viewport,
-    recreate_swapchain: bool,
-    previous_frame_render_end: Option<FenceSignalFuture<PresentFuture<Box<dyn GpuFuture>>>>,
+    recreate_swapchain: bool
 }
 
 struct LogicItems {
     frame_id: i32,
     show_frame_times: bool,
-    min_frame_duration: Duration,
     keys_pressed: BTreeSet<KeyCode>,
     keys_down: BTreeSet<KeyCode>,
-    frame_start_moments: VecDeque<Instant>,
     vertex_shader_uniform_buffers: Vec<Subbuffer<VertexData>>,
     fragment_shader_uniform_buffers: Vec<Subbuffer<FragmentData>>,
     eye_pos: Vec3,
     eye_horizon: Vec3,
     light_pos: Vec3,
-    // previous_frame_logic_end: Option<bool>,
-    async_duration_tracker: Option<JoinHandle<()>>,
 }
 
-struct FrameDuration {
-    logic_duration: Option<Duration>,
+struct Timing {
+    frame_component_durations:FrameComponentDurations,
+    frame_render_end: Arc<Mutex<Option<FenceSignalFuture<Box<dyn GpuFuture + Send>>>>>,
+    render_gpu_start: Arc<Mutex<Instant>>,
+    async_cpu_start: Arc<Mutex<Instant>>,
+    frame_start_moments: VecDeque<Instant>,
+    min_frame_duration: Duration,
+}
+
+struct AsyncManagement {
+    async_logic_prod: Sender<()>,
+    main_thread_cons: Receiver<(AsynchronousTask, Duration)>,
+}
+
+struct FrameComponentDurations {
+    base_logic_duration: Option<Duration>,
+    async_logic_duration: Option<Duration>,
     ui_duration: Option<Duration>,
     render_cpu_duration: Option<Duration>,
     render_gpu_duration: Option<Duration>,
-    frame_prep_duration: Option<Duration>,
+    gpu_prep_duration: Option<Duration>,
 }
 
-impl FrameDuration {
-
-    fn empty() -> Self {
-        FrameDuration {
-            logic_duration: None,
-            ui_duration: None,
-            render_cpu_duration: None,
-            render_gpu_duration: None,
-            frame_prep_duration: None,
-        }
-    }
-
-    fn display_duration(duration: Option<Duration>) -> String {
-        match duration {
-            None => {format!("{:>4}", "--")}
-            Some(duration) => {format!("{:4.1}", duration.as_secs_f32() * 1000.0)}
-        }
-    }
-}
-
-impl Display for FrameDuration {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "prep: {}, render_cpu: {}, ui: {}, logic: {}, render_gpu: {}",
-               Self::display_duration(self.frame_prep_duration),
-               Self::display_duration(self.render_cpu_duration),
-               Self::display_duration(self.ui_duration),
-               Self::display_duration(self.logic_duration),
-               Self::display_duration(self.render_gpu_duration),
-        )
-    }
+enum AsynchronousTask {
+    CpuLogic,
+    GpuRender,
 }
 
 impl App {
@@ -184,27 +166,64 @@ impl App {
             obj.indices
         ).unwrap();
 
-        let min_frame_duration = Duration::from_secs_f32(1.0 / 60.0);
-
-        let mut frame_start_moments: VecDeque<Instant> = VecDeque::new();
-        let now = Instant::now();
-        frame_start_moments.push_back(now - min_frame_duration);
-        frame_start_moments.push_back(now);
-
         let logic_items = LogicItems {
             frame_id: 0,
             show_frame_times: true,
-            min_frame_duration,
             keys_pressed: BTreeSet::new(),
             keys_down: BTreeSet::new(),
-            frame_start_moments,
             vertex_shader_uniform_buffers: Vec::new(),
             fragment_shader_uniform_buffers: Vec::new(),
             eye_pos: Vec3::new(0.0, 0.0, -1.5),
             eye_horizon: Vec3::X,
             light_pos: Vec3::new(0.0, 10.0, 0.0),
-            // previous_frame_logic_end: None,
-            async_duration_tracker: None,
+        };
+
+        let timing = Timing::new();
+
+        let (async_logic_prod, async_logic_cons) = channel::<()>();
+        let (done_checker_prod, done_checker_cons) = channel::<()>();
+        let (main_thread_prod, main_thread_cons) = channel::<(AsynchronousTask, Duration)>();
+
+        thread::spawn(move || {
+            loop {
+                async_logic_cons.recv().unwrap();
+
+                // expensive logic placeholder
+                thread::sleep(Duration::from_micros(4200));
+
+                done_checker_prod.send(()).unwrap();
+            }
+        });
+
+        {
+            let async_cpu_start = timing.async_cpu_start.clone();
+            let render_gpu_start = timing.render_gpu_start.clone();
+            let frame_render_end = timing.frame_render_end.clone();
+
+            thread::spawn(move || {
+                loop {
+                    let message = done_checker_cons.try_recv();
+                    if message.is_ok() {
+                        let async_cpu_duration = Instant::now() - *async_cpu_start.lock().unwrap();
+                        main_thread_prod.send((AsynchronousTask::CpuLogic, async_cpu_duration)).unwrap();
+                    }
+
+                    let mut frame_render_end_mutex = frame_render_end.lock().unwrap();
+                    if frame_render_end_mutex.is_some() && frame_render_end_mutex.as_ref().unwrap().is_signaled().unwrap() {
+                        let gpu_render_duration = Instant::now() - *render_gpu_start.lock().unwrap();
+                        main_thread_prod.send((AsynchronousTask::GpuRender, gpu_render_duration)).unwrap();
+                        *frame_render_end_mutex = None;
+                    }
+                    drop(frame_render_end_mutex);
+
+                    thread::sleep(Duration::from_micros(50));
+                }
+            });
+        }
+
+        let async_management = AsyncManagement {
+            async_logic_prod,
+            main_thread_cons,
         };
 
         App {
@@ -215,12 +234,9 @@ impl App {
             render_context: None,
             logic_items,
             egui: None,
-            frame_duration: FrameDuration::empty(),
+            timing,
+            async_management,
         }
-    }
-
-    fn do_logic(&mut self, logic_image_index: u32) {
-        self.frame_logic(logic_image_index);
     }
 }
 
@@ -228,8 +244,8 @@ impl ApplicationHandler for App {
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attributes = Window::default_attributes()
-            .with_title("VulkanPlayground")
-            .with_inner_size(PhysicalSize::new(1280, 960));
+            .with_title("Vulkan Playground")
+            .with_inner_size(PhysicalSize::new(800, 600));
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
         self.init_render_context(window.clone());
@@ -242,17 +258,8 @@ impl ApplicationHandler for App {
         // first frame render prep
         self.build_ui();
         for i in 0..=1 {
-            self.frame_logic(i);
+            self.base_logic(i);
         }
-
-        let bla = self.test.clone();
-
-        self.logic_items.async_duration_tracker = Some(thread::spawn(move || {
-            if bla.as_ref() == &true {
-
-            }
-            thread::sleep(Duration::from_micros(50));
-        }));
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
@@ -281,9 +288,9 @@ impl ApplicationHandler for App {
                 let frame_prep_start = Instant::now();
 
                 if self.logic_items.show_frame_times {
-                    info!("Frame {:5} | {}", self.logic_items.frame_id, self.frame_duration)
+                    info!("Frame {:5} | {}", self.logic_items.frame_id, self.timing.frame_component_durations)
                 }
-                self.frame_duration = FrameDuration::empty();
+                self.timing.frame_component_durations = FrameComponentDurations::empty();
                 self.logic_items.frame_id += 1;
 
                 // new frame start
@@ -293,21 +300,23 @@ impl ApplicationHandler for App {
                     Some(result) => result,
                 };
                 let logic_image_index = (acquire_future.image_index() + 1) % 2;
-                self.frame_duration.frame_prep_duration = Some(frame_prep_start.elapsed());
+                self.timing.frame_component_durations.gpu_prep_duration = Some(frame_prep_start.elapsed());
+
+                self.async_management.async_logic_prod.send(()).unwrap();
+                *self.timing.async_cpu_start.lock().unwrap() = Instant::now();
 
                 let render_cpu_start = Instant::now();
                 self.frame_render(acquire_future);
-                self.frame_duration.render_cpu_duration = Some(render_cpu_start.elapsed());
+                self.timing.frame_component_durations.render_cpu_duration = Some(render_cpu_start.elapsed());
+                *self.timing.render_gpu_start.lock().unwrap() = Instant::now();
 
                 let ui_start = Instant::now();
                 self.build_ui();
-                self.frame_duration.ui_duration = Some(ui_start.elapsed());
+                self.timing.frame_component_durations.ui_duration = Some(ui_start.elapsed());
 
                 let logic_start = Instant::now();
-                self.do_logic(logic_image_index);
-                self.frame_duration.logic_duration = Some(logic_start.elapsed());
-
-                // self.logic_items.previous_frame_logic_end = Some(true);
+                self.base_logic(logic_image_index);
+                self.timing.frame_component_durations.base_logic_duration = Some(logic_start.elapsed());
             }
             _ => {}
         }

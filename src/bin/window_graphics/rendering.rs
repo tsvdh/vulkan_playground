@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc};
 use log::{info, warn};
 use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::pipeline::{DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo};
@@ -22,7 +22,7 @@ use vulkano::pipeline::graphics::depth_stencil::{DepthState, DepthStencilState};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::sync::GpuFuture;
 use winit::window::Window;
-use VulkanPlayground::CommonItems;
+use vulkan_playground::CommonItems;
 use crate::{App, RenderContext};
 use crate::shader_modules::{fragment_shader_module, vertex_shader_module};
 
@@ -118,7 +118,6 @@ impl App {
             pipeline,
             viewport,
             recreate_swapchain: false,
-            previous_frame_render_end: None,
         });
     }
 
@@ -129,9 +128,12 @@ impl App {
         if new_window_size.width == 0 {
             return None;
         }
-        if render_context.previous_frame_render_end.is_some() {
-            render_context.previous_frame_render_end.as_mut().unwrap().cleanup_finished();
+
+        let mut previous_frame_render_end = self.timing.frame_render_end.lock().unwrap();
+        if previous_frame_render_end.is_some() {
+            previous_frame_render_end.as_mut().unwrap().cleanup_finished();
         }
+        drop(previous_frame_render_end);
 
         if render_context.recreate_swapchain {
             info!("Recreating swapchain");
@@ -229,17 +231,18 @@ impl App {
             .draw_on_image(scene_future, image_view.clone())
             .then_swapchain_present(self.vulkan_items.queue.clone(),
                                     SwapchainPresentInfo::swapchain_image_index(render_context.swapchain.clone(), image_index))
+            .boxed_send()
             .then_signal_fence_and_flush();
 
         match complete_future.map_err(Validated::unwrap) {
             Ok(future) => {
-                render_context.previous_frame_render_end = Some(future);
+                *self.timing.frame_render_end.lock().unwrap() = Some(future);
             }
             Err(error) => {
                 if error == VulkanError::OutOfDate {
                     render_context.recreate_swapchain = true;
                 }
-                render_context.previous_frame_render_end = None;
+                *self.timing.frame_render_end.lock().unwrap() = None;
 
                 warn!("Rendering failed: {error}");
             }

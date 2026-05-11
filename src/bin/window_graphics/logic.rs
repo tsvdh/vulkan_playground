@@ -1,7 +1,5 @@
 use std::f32::consts::FRAC_PI_2;
-use std::time::Instant;
 use glam::{Mat4, Vec3};
-use vulkano::sync::GpuFuture;
 use winit::event::{KeyEvent};
 use winit::keyboard::{PhysicalKey};
 use winit::keyboard::KeyCode::{ArrowDown, ArrowLeft, ArrowRight, ArrowUp, KeyT, PageDown, PageUp};
@@ -67,47 +65,6 @@ impl App {
         }
     }
 
-    fn get_frame_duration(&mut self) -> f32 {
-        if self.logic_items.frame_start_moments.len() != 2 {
-            panic!("Not enough frame moments in queue");
-        }
-        let back = *self.logic_items.frame_start_moments.back().unwrap();
-        let front = *self.logic_items.frame_start_moments.front().unwrap();
-        (back - front).as_secs_f32()
-    }
-
-    pub fn new_frame_start(&mut self) -> bool {
-        let frame_start_moments = &mut self.logic_items.frame_start_moments;
-        let now = Instant::now();
-        let duration_since_last_start = now.duration_since(*frame_start_moments.back().unwrap());
-
-        let previous_frame_render_end = &self.render_context.as_ref().unwrap().previous_frame_render_end;
-        // let previous_frame_logic_end = self.logic_items.previous_frame_logic_end;
-
-        let render_done = previous_frame_render_end.is_none()
-            || (previous_frame_render_end.is_some() && previous_frame_render_end.as_ref().unwrap().is_signaled().unwrap());
-        // let logic_done = previous_frame_logic_end.is_some() && previous_frame_logic_end.unwrap();
-
-        if render_done && self.frame_duration.render_gpu_duration.is_none() {
-            self.frame_duration.render_gpu_duration = Some();
-        }
-
-        // if logic_done && self.frame_duration.logic_duration.is_none() {
-        //     self.frame_duration.logic_duration = Some(
-        //         duration_since_last_start
-        //             - self.frame_duration.frame_prep_duration.unwrap()
-        //     );
-        // }
-
-        if render_done && duration_since_last_start > self.logic_items.min_frame_duration {
-            frame_start_moments.push_back(now);
-            frame_start_moments.pop_front();
-            return true;
-        }
-
-        false
-    }
-
     fn make_mvp_matrix(&self) -> Mat4 {
         let image_extent = self.render_context.as_ref().unwrap().swapchain.image_extent();
         let aspect_ratio = image_extent[0] as f32 / image_extent[1] as f32;
@@ -129,7 +86,7 @@ impl App {
         projection * (view * model)
     }
 
-    pub fn frame_logic(&mut self, logic_image_index: u32) {
+    pub fn base_logic(&mut self, logic_image_index: u32) {
         let frame_duration = self.get_frame_duration();
 
         self.handle_input(frame_duration);
