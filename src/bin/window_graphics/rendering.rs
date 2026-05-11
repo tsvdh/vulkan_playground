@@ -110,6 +110,9 @@ impl App {
             depth_range: 0.0..=1.0
         };
 
+        let vertex_shader_uniform_buffer = self.uniform_buffer_allocator.allocate_sized().unwrap();
+        let fragment_shader_uniform_buffer = self.uniform_buffer_allocator.allocate_sized().unwrap();
+
         self.render_context = Some(RenderContext {
             window,
             swapchain,
@@ -118,6 +121,8 @@ impl App {
             pipeline,
             viewport,
             recreate_swapchain: false,
+            vertex_shader_uniform_buffer,
+            fragment_shader_uniform_buffer,
         });
     }
 
@@ -171,19 +176,23 @@ impl App {
 
     pub fn frame_render(&mut self, acquire_future: SwapchainAcquireFuture) {
         let render_context = self.render_context.as_mut().unwrap();
-        let image_index = acquire_future.image_index();
-        let image_view = render_context.color_attachment_image_views[image_index as usize].clone();
+
+        *render_context.vertex_shader_uniform_buffer.write().unwrap() = self.logic_items.vertex_shader_uniform.unwrap();
+        *render_context.fragment_shader_uniform_buffer.write().unwrap() = self.logic_items.fragment_shader_uniform.unwrap();
 
         let descriptor_set_layout = render_context.pipeline.layout().set_layouts()[0].clone();
         let descriptor_set = DescriptorSet::new(
             self.vulkan_items.descriptor_set_allocator.clone(),
             descriptor_set_layout.clone(),
             [
-                WriteDescriptorSet::buffer(0, self.logic_items.vertex_shader_uniform_buffers[image_index as usize].clone()),
-                WriteDescriptorSet::buffer(1, self.logic_items.fragment_shader_uniform_buffers[image_index as usize].clone())
+                WriteDescriptorSet::buffer(0, render_context.vertex_shader_uniform_buffer.clone()),
+                WriteDescriptorSet::buffer(1, render_context.fragment_shader_uniform_buffer.clone())
             ],
             []
         ).unwrap();
+
+        let image_index = acquire_future.image_index();
+        let image_view = render_context.color_attachment_image_views[image_index as usize].clone();
 
         let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
             self.vulkan_items.command_buffer_allocator.clone(),

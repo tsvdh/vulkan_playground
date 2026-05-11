@@ -61,7 +61,9 @@ struct RenderContext {
     depth_attachment_image_view: Arc<ImageView>,
     pipeline: Arc<GraphicsPipeline>,
     viewport: Viewport,
-    recreate_swapchain: bool
+    recreate_swapchain: bool,
+    vertex_shader_uniform_buffer: Subbuffer<VertexData>,
+    fragment_shader_uniform_buffer: Subbuffer<FragmentData>,
 }
 
 struct LogicItems {
@@ -69,8 +71,8 @@ struct LogicItems {
     show_frame_times: bool,
     keys_pressed: BTreeSet<KeyCode>,
     keys_down: BTreeSet<KeyCode>,
-    vertex_shader_uniform_buffers: Vec<Subbuffer<VertexData>>,
-    fragment_shader_uniform_buffers: Vec<Subbuffer<FragmentData>>,
+    vertex_shader_uniform: Option<VertexData>,
+    fragment_shader_uniform: Option<FragmentData>,
     eye_pos: Vec3,
     eye_horizon: Vec3,
     light_pos: Vec3,
@@ -171,8 +173,8 @@ impl App {
             show_frame_times: true,
             keys_pressed: BTreeSet::new(),
             keys_down: BTreeSet::new(),
-            vertex_shader_uniform_buffers: Vec::new(),
-            fragment_shader_uniform_buffers: Vec::new(),
+            vertex_shader_uniform: None,
+            fragment_shader_uniform: None,
             eye_pos: Vec3::new(0.0, 0.0, -1.5),
             eye_horizon: Vec3::X,
             light_pos: Vec3::new(0.0, 10.0, 0.0),
@@ -257,9 +259,7 @@ impl ApplicationHandler for App {
 
         // first frame render prep
         self.build_ui();
-        for i in 0..=1 {
-            self.base_logic(i);
-        }
+        self.base_logic();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
@@ -299,7 +299,6 @@ impl ApplicationHandler for App {
                     None => return,
                     Some(result) => result,
                 };
-                let logic_image_index = (acquire_future.image_index() + 1) % 2;
                 self.timing.frame_component_durations.gpu_prep_duration = Some(frame_prep_start.elapsed());
 
                 self.async_management.async_logic_prod.send(()).unwrap();
@@ -315,7 +314,7 @@ impl ApplicationHandler for App {
                 self.timing.frame_component_durations.ui_duration = Some(ui_start.elapsed());
 
                 let logic_start = Instant::now();
-                self.base_logic(logic_image_index);
+                self.base_logic();
                 self.timing.frame_component_durations.base_logic_duration = Some(logic_start.elapsed());
             }
             _ => {}

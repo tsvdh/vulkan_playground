@@ -86,28 +86,19 @@ impl App {
         projection * (view * model)
     }
 
-    pub fn base_logic(&mut self, logic_image_index: u32) {
+    pub fn base_logic(&mut self) {
         let frame_duration = self.get_frame_duration();
 
         self.handle_input(frame_duration);
-
-        if self.logic_items.vertex_shader_uniform_buffers.is_empty() {
-            for _ in 0..=1 {
-                self.logic_items.vertex_shader_uniform_buffers.push(self.uniform_buffer_allocator.allocate_sized().unwrap());
-                self.logic_items.fragment_shader_uniform_buffers.push(self.uniform_buffer_allocator.allocate_sized().unwrap());
-            }
-        }
-
-        let vertex_data = vertex_shader_module::VertexData {
-            mvp: self.make_mvp_matrix().to_cols_array_2d(),
-        };
-        *self.logic_items.vertex_shader_uniform_buffers[logic_image_index as usize].write().unwrap() = vertex_data;
         
-        let fragment_data = fragment_shader_module::FragmentData {
+        self.logic_items.vertex_shader_uniform = Some(vertex_shader_module::VertexData {
+            mvp: self.make_mvp_matrix().to_cols_array_2d(),
+        });
+        
+        self.logic_items.fragment_shader_uniform = Some(fragment_shader_module::FragmentData {
             light_pos: self.logic_items.light_pos.to_array().into(),
             eye_pos: self.logic_items.eye_pos.to_array(),
-        };
-        *self.logic_items.fragment_shader_uniform_buffers[logic_image_index as usize].write().unwrap() = fragment_data;
+        });
 
         self.logic_items.keys_pressed.clear();
     }
