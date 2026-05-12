@@ -2,9 +2,9 @@ use std::collections::VecDeque;
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use crate::{App, AsynchronousTask, FrameComponentDurations, Timing};
+use crate::{App, AsynchronousTask, FrameComponentDurations, TimingItems};
 
-impl Timing {
+impl TimingItems {
 
     pub fn new() -> Self {
         let min_frame_duration = Duration::from_secs_f32(1.0 / 60.0);
@@ -14,7 +14,7 @@ impl Timing {
         frame_start_moments.push_back(now - min_frame_duration);
         frame_start_moments.push_back(now);
 
-        Timing {
+        TimingItems {
             frame_component_durations: FrameComponentDurations::empty(),
             frame_render_end: Arc::new(Mutex::new(None)),
             render_gpu_start: Arc::new(Mutex::new(now)),
@@ -61,34 +61,34 @@ impl Display for FrameComponentDurations {
 
 impl App {
     pub fn get_frame_duration(&self) -> f32 {
-        if self.timing.frame_start_moments.len() != 2 {
+        if self.timing_items.frame_start_moments.len() != 2 {
             panic!("Not enough frame moments in queue");
         }
-        let back = *self.timing.frame_start_moments.back().unwrap();
-        let front = *self.timing.frame_start_moments.front().unwrap();
+        let back = *self.timing_items.frame_start_moments.back().unwrap();
+        let front = *self.timing_items.frame_start_moments.front().unwrap();
         (back - front).as_secs_f32()
     }
 
     pub fn new_frame_start(&mut self) -> bool {
-        let frame_start_moments = &mut self.timing.frame_start_moments;
+        let frame_start_moments = &mut self.timing_items.frame_start_moments;
         let now = Instant::now();
         let duration_since_last_start = now.duration_since(*frame_start_moments.back().unwrap());
 
         for message in self.async_management.main_thread_cons.try_iter() {
             match message {
                 (AsynchronousTask::CpuLogic, duration) => {
-                    self.timing.frame_component_durations.async_logic_duration = Some(duration);
+                    self.timing_items.frame_component_durations.async_logic_duration = Some(duration);
                 }
                 (AsynchronousTask::GpuRender, duration) => {
-                    self.timing.frame_component_durations.render_gpu_duration = Some(duration);
+                    self.timing_items.frame_component_durations.render_gpu_duration = Some(duration);
                 }
             }
         }
 
-        if duration_since_last_start > self.timing.min_frame_duration
-            && self.timing.frame_component_durations.gpu_prep_duration.is_none()
-            || (self.timing.frame_component_durations.async_logic_duration.is_some()
-                && self.timing.frame_component_durations.render_gpu_duration.is_some())
+        if duration_since_last_start > self.timing_items.min_frame_duration
+            && self.timing_items.frame_component_durations.gpu_prep_duration.is_none()
+            || (self.timing_items.frame_component_durations.async_logic_duration.is_some()
+                && self.timing_items.frame_component_durations.render_gpu_duration.is_some())
         {
             frame_start_moments.push_back(now);
             frame_start_moments.pop_front();

@@ -134,7 +134,7 @@ impl App {
             return None;
         }
 
-        let mut previous_frame_render_end = self.timing.frame_render_end.lock().unwrap();
+        let mut previous_frame_render_end = self.timing_items.frame_render_end.lock().unwrap();
         if previous_frame_render_end.is_some() {
             previous_frame_render_end.as_mut().unwrap().cleanup_finished();
         }
@@ -224,9 +224,7 @@ impl App {
             .bind_vertex_buffers(0, self.vertex_buffer.clone()).unwrap()
             .bind_index_buffer(self.index_buffer.clone()).unwrap();
 
-        unsafe {
-            command_buffer_builder.draw_indexed(self.index_buffer.len() as u32, 1, 0, 0, 0).unwrap();
-        }
+        unsafe { command_buffer_builder.draw_indexed(self.index_buffer.len() as u32, 1, 0, 0, 0).unwrap(); }
 
         command_buffer_builder
             .end_rendering().unwrap();
@@ -245,13 +243,13 @@ impl App {
 
         match complete_future.map_err(Validated::unwrap) {
             Ok(future) => {
-                *self.timing.frame_render_end.lock().unwrap() = Some(future);
+                *self.timing_items.frame_render_end.lock().unwrap() = Some(future);
             }
             Err(error) => {
                 if error == VulkanError::OutOfDate {
                     render_context.recreate_swapchain = true;
                 }
-                *self.timing.frame_render_end.lock().unwrap() = None;
+                *self.timing_items.frame_render_end.lock().unwrap() = None;
 
                 warn!("Rendering failed: {error}");
             }
