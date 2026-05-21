@@ -2734,6 +2734,8 @@ dependencies = [
  "log",
  "obj-rs",
  "pretty_env_logger",
+ "serde",
+ "serde_json",
  "vulkano",
  "vulkano-shaders",
  "winit",

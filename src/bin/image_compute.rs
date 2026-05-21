@@ -25,7 +25,8 @@ fn main() {
         queue,
         memory_allocator,
         descriptor_set_allocator,
-        command_buffer_allocator
+        command_buffer_allocator,
+        uniform_buffer_allocator: _,
     } = vulkan_playground::get_common_vulkan_items(None, None, None, QueueFlags::GRAPHICS, None);
 
     mod image_shader_module {

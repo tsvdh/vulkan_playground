@@ -1,44 +1,68 @@
-use std::sync::{Arc};
+use crate::logic::LogicItems;
+use crate::shader_modules::fragment_shader_module::FragmentData;
+use crate::shader_modules::vertex_shader_module::VertexData;
+use crate::shader_modules::{fragment_shader_module, vertex_shader_module};
+use crate::timing::TimingItems;
+use crate::ui::GuiItems;
 use log::{info, warn};
-use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
-use vulkano::pipeline::{DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo};
-use vulkano::pipeline::graphics::color_blend::{ColorBlendAttachmentState, ColorBlendState};
-use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
-use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
-use vulkano::pipeline::graphics::multisample::MultisampleState;
-use vulkano::pipeline::graphics::rasterization::RasterizationState;
-use vulkano::pipeline::graphics::subpass::{PipelineRenderingCreateInfo};
-use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
-use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
-use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
-use vulkano::swapchain::{acquire_next_image, PresentMode, Surface, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo};
-use vulkano::{Validated, VulkanError};
+use std::sync::Arc;
+use vulkan_playground::CommonItems;
+use vulkano::buffer::Subbuffer;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, RenderingAttachmentInfo, RenderingInfo};
 use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
 use vulkano::format::Format;
 use vulkano::image::view::ImageView;
+use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::memory::allocator::AllocationCreateInfo;
+use vulkano::pipeline::graphics::color_blend::{ColorBlendAttachmentState, ColorBlendState};
 use vulkano::pipeline::graphics::depth_stencil::{DepthState, DepthStencilState};
+use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
+use vulkano::pipeline::graphics::multisample::MultisampleState;
+use vulkano::pipeline::graphics::rasterization::RasterizationState;
+use vulkano::pipeline::graphics::subpass::PipelineRenderingCreateInfo;
+use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
+use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
+use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
+use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
+use vulkano::pipeline::{DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
+use vulkano::swapchain::{acquire_next_image, PresentMode, Surface, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo};
 use vulkano::sync::GpuFuture;
+use vulkano::{Validated, VulkanError};
 use winit::window::Window;
-use vulkan_playground::CommonItems;
-use crate::{App, RenderContext};
-use crate::shader_modules::{fragment_shader_module, vertex_shader_module};
 
-impl App {
-    pub fn init_render_context(&mut self, window: Arc<Window>) {
-        let surface = Surface::from_window(self.vulkan_items.instance.clone(), window.clone()).unwrap();
+pub struct RenderItems {
+    pub window: Arc<Window>,
+    pub swapchain: Arc<Swapchain>,
+
+    recreate_swapchain: bool,
+
+    color_attachment_image_views: Vec<Arc<ImageView>>,
+    depth_attachment_image_view: Arc<ImageView>,
+    pipeline: Arc<GraphicsPipeline>,
+    viewport: Viewport,
+    vertex_shader_uniform_buffer: Subbuffer<VertexData>,
+    fragment_shader_uniform_buffer: Subbuffer<FragmentData>,
+}
+
+impl RenderItems {
+
+    pub fn set_recreate_swapchain(&mut self, value: bool) {
+        self.recreate_swapchain = value;
+    }
+
+    pub fn new(vulkan_items: &CommonItems, window: Arc<Window>) -> Self {
+        let surface = Surface::from_window(vulkan_items.instance.clone(), window.clone()).unwrap();
 
         let (swapchain, images) = {
-            let surface_capabilities = self.vulkan_items.device.physical_device()
+            let surface_capabilities = vulkan_items.device.physical_device()
                 .surface_capabilities(&surface, Default::default()).unwrap();
 
-            let (image_format, _) = self.vulkan_items.device.physical_device()
+            let (image_format, _) = vulkan_items.device.physical_device()
                 .surface_formats(&surface, Default::default()).unwrap()[0];
 
             Swapchain::new(
-                self.vulkan_items.device.clone(),
+                vulkan_items.device.clone(),
                 surface.clone(),
                 SwapchainCreateInfo {
                     min_image_count: surface_capabilities.min_image_count.max(2),
@@ -51,12 +75,11 @@ impl App {
             ).unwrap()
         };
 
-        let (color_image_views, depth_image_view) = Self::make_image_views(&self.vulkan_items, &images);
+        let (color_image_views, depth_image_view) = Self::make_image_views(&vulkan_items, &images);
 
         let pipeline = {
-            
-            let vertex_shader_module = vertex_shader_module::load(self.vulkan_items.device.clone()).expect("Failed to create vertex shader");
-            let fragment_shader_module = fragment_shader_module::load(self.vulkan_items.device.clone()).expect("Failed to create fragment shader");
+            let vertex_shader_module = vertex_shader_module::load(vulkan_items.device.clone()).expect("Failed to create vertex shader");
+            let fragment_shader_module = fragment_shader_module::load(vulkan_items.device.clone()).expect("Failed to create fragment shader");
             let vertex_shader = vertex_shader_module.entry_point("main").unwrap();
             let fragment_shader = fragment_shader_module.entry_point("main").unwrap();
 
@@ -68,9 +91,9 @@ impl App {
             ];
 
             let layout = PipelineLayout::new(
-                self.vulkan_items.device.clone(),
+                vulkan_items.device.clone(),
                 PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
-                    .into_pipeline_layout_create_info(self.vulkan_items.device.clone()).unwrap()
+                    .into_pipeline_layout_create_info(vulkan_items.device.clone()).unwrap()
             ).unwrap();
 
             let dynamic_rendering_info = PipelineRenderingCreateInfo {
@@ -80,7 +103,7 @@ impl App {
             };
 
             GraphicsPipeline::new(
-                self.vulkan_items.device.clone(),
+                vulkan_items.device.clone(),
                 None,
                 GraphicsPipelineCreateInfo {
                     stages: stages.into_iter().collect(),
@@ -110,10 +133,10 @@ impl App {
             depth_range: 0.0..=1.0
         };
 
-        let vertex_shader_uniform_buffer = self.uniform_buffer_allocator.allocate_sized().unwrap();
-        let fragment_shader_uniform_buffer = self.uniform_buffer_allocator.allocate_sized().unwrap();
+        let vertex_shader_uniform_buffer = vulkan_items.uniform_buffer_allocator.allocate_sized().unwrap();
+        let fragment_shader_uniform_buffer = vulkan_items.uniform_buffer_allocator.allocate_sized().unwrap();
 
-        self.render_context = Some(RenderContext {
+        RenderItems {
             window,
             swapchain,
             color_attachment_image_views: color_image_views,
@@ -123,80 +146,88 @@ impl App {
             recreate_swapchain: false,
             vertex_shader_uniform_buffer,
             fragment_shader_uniform_buffer,
-        });
+        }
     }
 
-    pub fn frame_rendering_prep(&mut self) -> Option<SwapchainAcquireFuture> {
-        let render_context = self.render_context.as_mut().unwrap();
-
-        let new_window_size = render_context.window.inner_size();
+    pub fn frame_rendering_prep(&mut self,
+                                vulkan_items: &CommonItems,
+                                timing_items: &mut TimingItems
+    ) -> Option<SwapchainAcquireFuture>
+    {
+        let new_window_size = self.window.inner_size();
         if new_window_size.width == 0 {
             return None;
         }
 
-        let mut previous_frame_render_end = self.timing_items.frame_render_end.lock().unwrap();
-        if previous_frame_render_end.is_some() {
-            previous_frame_render_end.as_mut().unwrap().cleanup_finished();
+        let mut frame_render_end_mutex = timing_items.get_frame_render_end_mutex();
+        if frame_render_end_mutex.is_some() {
+            frame_render_end_mutex.as_mut().unwrap().cleanup_finished();
         }
-        drop(previous_frame_render_end);
+        drop(frame_render_end_mutex);
 
-        if render_context.recreate_swapchain {
+        if self.recreate_swapchain {
             info!("Recreating swapchain");
-            let (new_swapchain, new_images) = render_context.swapchain.recreate(
+            let (new_swapchain, new_images) = self.swapchain.recreate(
                 SwapchainCreateInfo {
                     image_extent: new_window_size.into(),
-                    ..render_context.swapchain.create_info()
+                    ..self.swapchain.create_info()
                 }
             ).unwrap();
 
-            render_context.swapchain = new_swapchain;
-            (render_context.color_attachment_image_views,
-             render_context.depth_attachment_image_view) = Self::make_image_views(&self.vulkan_items, &new_images);
-            render_context.viewport.extent = new_window_size.into();
-            render_context.recreate_swapchain = false;
+            self.swapchain = new_swapchain;
+            (self.color_attachment_image_views,
+             self.depth_attachment_image_view) = Self::make_image_views(vulkan_items, &new_images);
+            self.viewport.extent = new_window_size.into();
+            self.recreate_swapchain = false;
         }
 
         let (_image_index, suboptimal, acquire_future) =
-            match acquire_next_image(render_context.swapchain.clone(), None).map_err(Validated::unwrap) {
+            match acquire_next_image(self.swapchain.clone(), None).map_err(Validated::unwrap) {
                 Ok(result) => result,
                 Err(VulkanError::OutOfDate) => {
-                    render_context.recreate_swapchain = true;
+                    self.recreate_swapchain = true;
                     return None;
                 },
                 Err(error) => panic!("Failed to acquire next image: {error}")
             };
 
         if suboptimal {
-            render_context.recreate_swapchain = true;
+            self.recreate_swapchain = true;
             return None;
         }
 
         Some(acquire_future)
     }
 
-    pub fn frame_render(&mut self, acquire_future: SwapchainAcquireFuture) {
-        let render_context = self.render_context.as_mut().unwrap();
+    pub fn frame_render(&mut self,
+                        vulkan_items: &CommonItems,
+                        timing_items: &mut TimingItems,
+                        logic_items: &LogicItems,
+                        gui_items: &mut GuiItems,
+                        acquire_future: SwapchainAcquireFuture,
+                        vertex_buffer: Subbuffer<[obj::Vertex]>,
+                        index_buffer: Subbuffer<[u16]>,
+    ) {
+        *self.vertex_shader_uniform_buffer.write().unwrap() = *logic_items.get_vertex_shader_uniform();
+        *self.fragment_shader_uniform_buffer.write().unwrap() = *logic_items.get_fragment_shader_uniform();
 
-        *render_context.vertex_shader_uniform_buffer.write().unwrap() = self.logic_items.vertex_shader_uniform.unwrap();
-        *render_context.fragment_shader_uniform_buffer.write().unwrap() = self.logic_items.fragment_shader_uniform.unwrap();
-
-        let descriptor_set_layout = render_context.pipeline.layout().set_layouts()[0].clone();
+        let descriptor_set_layout = self.pipeline.layout().set_layouts()[0].clone();
         let descriptor_set = DescriptorSet::new(
-            self.vulkan_items.descriptor_set_allocator.clone(),
+            vulkan_items.descriptor_set_allocator.clone(),
             descriptor_set_layout.clone(),
             [
-                WriteDescriptorSet::buffer(0, render_context.vertex_shader_uniform_buffer.clone()),
-                WriteDescriptorSet::buffer(1, render_context.fragment_shader_uniform_buffer.clone())
+                WriteDescriptorSet::buffer(0, self.vertex_shader_uniform_buffer.clone()),
+                WriteDescriptorSet::buffer(1, self.fragment_shader_uniform_buffer.clone())
             ],
             []
         ).unwrap();
 
         let image_index = acquire_future.image_index();
-        let image_view = render_context.color_attachment_image_views[image_index as usize].clone();
+        let image_view = self.color_attachment_image_views[image_index as usize].clone();
 
         let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
-            self.vulkan_items.command_buffer_allocator.clone(),
-            self.vulkan_items.queue.queue_family_index(),
+            vulkan_items.command_buffer_allocator.clone(),
+            vulkan_items.queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit
         ).unwrap();
 
@@ -213,18 +244,18 @@ impl App {
                         load_op: AttachmentLoadOp::Clear,
                         store_op: AttachmentStoreOp::DontCare,
                         clear_value: Some(1f32.into()),
-                        ..RenderingAttachmentInfo::image_view(render_context.depth_attachment_image_view.clone())
+                        ..RenderingAttachmentInfo::image_view(self.depth_attachment_image_view.clone())
                     }),
                     ..Default::default()
                 }
             ).unwrap()
-            .set_viewport(0, [render_context.viewport.clone()].into_iter().collect()).unwrap()
-            .bind_pipeline_graphics(render_context.pipeline.clone()).unwrap()
-            .bind_descriptor_sets(PipelineBindPoint::Graphics, render_context.pipeline.layout().clone(), 0, descriptor_set).unwrap()
-            .bind_vertex_buffers(0, self.vertex_buffer.clone()).unwrap()
-            .bind_index_buffer(self.index_buffer.clone()).unwrap();
+            .set_viewport(0, [self.viewport.clone()].into_iter().collect()).unwrap()
+            .bind_pipeline_graphics(self.pipeline.clone()).unwrap()
+            .bind_descriptor_sets(PipelineBindPoint::Graphics, self.pipeline.layout().clone(), 0, descriptor_set).unwrap()
+            .bind_vertex_buffers(0, vertex_buffer.clone()).unwrap()
+            .bind_index_buffer(index_buffer.clone()).unwrap();
 
-        unsafe { command_buffer_builder.draw_indexed(self.index_buffer.len() as u32, 1, 0, 0, 0).unwrap(); }
+        unsafe { command_buffer_builder.draw_indexed(index_buffer.len() as u32, 1, 0, 0, 0).unwrap(); }
 
         command_buffer_builder
             .end_rendering().unwrap();
@@ -232,24 +263,24 @@ impl App {
         let command_buffer = command_buffer_builder.build().unwrap();
 
         let scene_future = acquire_future
-            .then_execute(self.vulkan_items.queue.clone(), command_buffer.clone()).unwrap();
+            .then_execute(vulkan_items.queue.clone(), command_buffer.clone()).unwrap();
 
-        let complete_future = self.egui.as_mut().unwrap()
+        let complete_future = gui_items.gui
             .draw_on_image(scene_future, image_view.clone())
-            .then_swapchain_present(self.vulkan_items.queue.clone(),
-                                    SwapchainPresentInfo::swapchain_image_index(render_context.swapchain.clone(), image_index))
+            .then_swapchain_present(vulkan_items.queue.clone(),
+                                    SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_index))
             .boxed_send()
             .then_signal_fence_and_flush();
 
         match complete_future.map_err(Validated::unwrap) {
             Ok(future) => {
-                *self.timing_items.frame_render_end.lock().unwrap() = Some(future);
+                *timing_items.get_frame_render_end_mutex() = Some(future);
             }
             Err(error) => {
                 if error == VulkanError::OutOfDate {
-                    render_context.recreate_swapchain = true;
+                    self.recreate_swapchain = true;
                 }
-                *self.timing_items.frame_render_end.lock().unwrap() = None;
+                *timing_items.get_frame_render_end_mutex() = None;
 
                 warn!("Rendering failed: {error}");
             }

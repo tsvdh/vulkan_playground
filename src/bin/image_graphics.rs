@@ -38,7 +38,8 @@ fn main() {
         queue,
         memory_allocator,
         descriptor_set_allocator: _,
-        command_buffer_allocator
+        command_buffer_allocator,
+        uniform_buffer_allocator: _,
     } = vulkan_playground::get_common_vulkan_items(None, None, None, QueueFlags::GRAPHICS, None);
 
     let vertex1 = BasicVertex { position: [0.0, -0.5]};

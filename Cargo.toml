@@ -14,3 +14,5 @@ obj-rs = { git = "https://github.com/simnalamburt/obj-rs", rev = "62455dd", feat
 glam = "0.32"
 egui = "0.31"
 egui_winit_vulkano = { git = "https://github.com/tsvdh/egui_winit_vulkano.git", branch = "master" }
+serde_json = "1.0"
+serde = { version = "1.0.228", features = ["derive"] }

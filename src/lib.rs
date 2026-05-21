@@ -1,14 +1,15 @@
-
-
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use log::{debug, error, info, warn};
+use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
+use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo};
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, DeviceFeatures, Queue, QueueCreateInfo, QueueFlags};
 use vulkano::device::physical::{PhysicalDeviceType};
 use vulkano::instance::debug::{DebugUtilsMessageSeverity, DebugUtilsMessageType, DebugUtilsMessenger, DebugUtilsMessengerCallback, DebugUtilsMessengerCreateInfo};
 use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions};
-use vulkano::memory::allocator::{StandardMemoryAllocator};
+use vulkano::memory::allocator::{MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::VulkanLibrary;
 use winit::event_loop::EventLoop;
 
@@ -27,6 +28,7 @@ pub struct CommonItems {
     pub memory_allocator: Arc<StandardMemoryAllocator>,
     pub descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
     pub command_buffer_allocator: Arc<StandardCommandBufferAllocator>,
+    pub uniform_buffer_allocator: Arc<SubbufferAllocator>,
 }
 
 pub fn get_debug_callback(instance: Arc<Instance>) -> DebugUtilsMessenger {
@@ -131,8 +133,16 @@ pub fn get_common_vulkan_items(instance_extensions: Option<InstanceExtensions>,
     let command_buffer_allocator = Arc::new(StandardCommandBufferAllocator::new(
         device.clone(), StandardCommandBufferAllocatorCreateInfo::default()
     ));
+    let uniform_buffer_allocator = Arc::new(SubbufferAllocator::new(
+        memory_allocator.clone(),
+        SubbufferAllocatorCreateInfo {
+            buffer_usage: BufferUsage::UNIFORM_BUFFER,
+            memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+            ..Default::default()
+        }
+    ));
 
-    CommonItems{
+    CommonItems {
         library,
         instance,
         debug_callback,
@@ -141,5 +151,44 @@ pub fn get_common_vulkan_items(instance_extensions: Option<InstanceExtensions>,
         memory_allocator,
         descriptor_set_allocator,
         command_buffer_allocator,
+        uniform_buffer_allocator,
+    }
+}
+
+pub struct InitOption<T> {
+    data: Option<T>
+}
+
+impl<T> InitOption<T> {
+
+    pub fn none() -> Self {
+        InitOption { data: None }
+    }
+
+    pub fn some(data: T) -> Self {
+        InitOption { data: Some(data) }
+    }
+
+    pub fn get_ref(&self) -> &T {
+        self.data.as_ref().unwrap()
+    }
+
+    pub fn get_mut(&mut self) -> &mut T {
+        self.data.as_mut().unwrap()
+    }
+}
+
+impl<T> Deref for InitOption<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_ref()
+    }
+}
+
+impl<T> DerefMut for InitOption<T> {
+
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.get_mut()
     }
 }
